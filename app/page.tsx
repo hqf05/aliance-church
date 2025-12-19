@@ -12,23 +12,38 @@ import Container from '@mui/material/Container';
 import React from "react";
 import ListItemButton from '@mui/material/ListItemButton';
 import Divider from '@mui/material/Divider';
+import bibleRaw from "./data/bible.json";
 
 type Hymn = {
-  id: string;
+  id: number;
   title: string;
-  lines: string[];
+  lyrics: string[];
+  createdAt: string;
 };
-const HYMNS: Hymn[] = [
-  {
-    id: "hymn-1",
-    title: "فمي يحدث بحبك",
-    lines: [
-     "    ١- فمي يحدث بحبك اليوم كله بمجدك لساني يلهج بحمدك افرح افرح دوما بك",
-      "القرار - (هللويا للرب الاله هللويا فدانا بدماه هللويا محا صكنا صار برنا ",
-      
-    ],
-  },
+const BIBLE_BOOK_NAMES = [
+  "متى",
+  "مرقس",
+  "لوقا",
+  "يوحنا",
+  "تكوين",
+  "خروج",
+  "مزامير",
 ];
+function normalizeArabic(text: string) {
+  return text
+    .trim()
+    .replace(/^ال/, "")
+    .replace(/^إنجيل\s+/, "")
+    .replace(/[ًٌٍَُِّْـ]/g, ""); // يشيل الحركات
+}
+
+function isBibleQuery(q: string) {
+  const clean = normalizeArabic(q);
+
+  return BIBLE_BOOK_NAMES.some(name =>
+    clean.startsWith(name)
+  );
+}
 function sendToScreen(text: string) {
   const channel = new BroadcastChannel("church-presenter");
   channel.postMessage({ type: "SHOW_TEXT", payload: text });
@@ -47,67 +62,162 @@ declare global {
     getScreens?: () => Promise<ScreenInfo[]>;
   }
 }
-
-type BibleBook = {
-  id: string;
-  name: string;
+type BibleData = {
+  [bookId: string]: {
+    name: string;
+    chapters: {
+      [chapterNumber: string]: {
+        [verseNumber: string]: string;
+      };
+    };
+  };
 };
+type BibleVerse = {
+  number: string;
+  text: string;
+};
+
+type SearchResult =
+  | {
+      type: "book";
+      bookName: string;
+      chapters: string[];
+    }
+  | {
+      type: "chapter";
+      chapter: string;
+      verses: BibleVerse[];
+    }
+  | null;
+const bible = bibleRaw as BibleData;
 export default function Home() {
+  
+  const [bibleResult, setBibleResult] = useState<SearchResult>(null);
+  const [result, setResult] = useState<SearchResult>(null);
+  const [currentBookName, setCurrentBookName] = useState<string | null>(null);
+  const [presentTexts, setPresentTexts] = useState<string | null>(null);
+const overlayRefs = useRef<HTMLDivElement | null>(null);
+  const BIBLE_ID = process.env.BIBLEID!;
   const [query, setQuery] = useState("");
-  const [books, setBooks] = useState<BibleBook[]>([]);
-  const [resultss, setResultss] = useState<BibleBook[]>([]);
   const [input, setInput] = useState("");
+  const [hymns, setHymns] = useState<Hymn[]>([]);
   const [hymnResults, setHymnResults] = useState<Hymn[]>([]);
-const [bookResults, setBookResults] = useState<BibleBook[]>([]);
+async function enterFullscreens() {
+  if (!overlayRefs.current) return;
+
+  try {
+    if (!document.fullscreenElement) {
+      await overlayRefs.current.requestFullscreen();
+    }
+  } catch (err) {
+    console.error(err);
+  }
+}
+useEffect(() => {
+  fetch("/api/hymns")
+    .then(res => res.json())
+    .then((data: Hymn[]) => {
+      console.log("🎵 HYMNS FROM DB:", data);
+      setHymns(data);
+    });
+}, []);
+function searchBibleLocal(query: string) : SearchResult {
+  
+  const q = query.trim();
+  
+  if (!q) return null;
+  
+
+  const parts = q.split(" ");
+
+  // متى
+  if (parts.length === 1) {
+  
+    const book = bible["MAT"];
+    
+    if (!book) return null;
+
+    return {
+      type: "book",
+      bookName: book.name,
+      chapters: Object.keys(book.chapters)
+    };
+    
+  }
+
+  // متى 5
+  if (parts.length === 2) {
+    const chapter = parts[1];
+    const book = bible["MAT"];
+    const verses = book.chapters[chapter];
+
+    if (!verses) return null;
+
+    return {
+      type: "chapter",
+      chapter,
+      verses: Object.entries(verses).map(([num, text]) => ({
+        number: num,
+        text
+      }))
+    };
+  }
+
+  return null;
+}
 function handleSearch(e: React.ChangeEvent<HTMLInputElement>) {
   const v = e.target.value;
   setQ(v);
 
   if (!v.trim()) {
     setHymnResults([]);
-    setBookResults([]);
     setSelectedHymnId(null);
     return;
   }
 
-  // 🔹 بحث الترانيم
-  const hymnFiltered = HYMNS.filter(h =>
+  const filtered = hymns.filter(h =>
     h.title.includes(v) ||
-    h.lines.some(l => l.includes(v))
+    h.lyrics.some(l => l.includes(v))
   );
 
-  // 🔹 بحث أسفار الكتاب المقدس
-  const bookFiltered = books.filter(b =>
-    b.name.includes(v)
-  );
-
-  setHymnResults(hymnFiltered);
-  setBookResults(bookFiltered);
+  setHymnResults(filtered);
 }
-  
-useEffect(() => {
-  async function loadBooks() {
-    const res = await fetch("/api/bible/verses");
-    const data = await res.json();
-
-    // 🔥 التحويل المهم
-    const booksArray: BibleBook[] = Object.entries(data).map(
-      ([id, name]) => ({
-        id,
-        name: name as string,
-      })
-    );
-
-    console.log("BOOKS ARRAY 👉", booksArray);
-
-    setBooks(booksArray);
+function exitPresentations() {
+  setPresentTexts(null);
+  if (document.fullscreenElement) {
+    document.exitFullscreen().catch(() => {});
   }
+}
+useEffect(() => {
+  const onKeyDown = (e: KeyboardEvent) => {
+    if (e.key === "Escape") {
+      exitPresentations();
+    }
+  };
 
-  loadBooks();
+  window.addEventListener("keydown", onKeyDown);
+  return () => window.removeEventListener("keydown", onKeyDown);
 }, []);
+function startPresent(text: string) {
+  setPresentText(text);
+  setTimeout(async () => {
+    if (overlayRef.current && !document.fullscreenElement) {
+      await overlayRef.current.requestFullscreen();
+    }
+  }, 0);
+}
 
+function exitPresentation() {
+  setPresentText(null);
+  if (document.fullscreenElement) {
+    document.exitFullscreen().catch(() => {});
+  }
+}
+// async function searchBible(q: string) {
+//   console.log("🔥 searchBible CALLED WITH:", q);
 
-
+//   if (!q.trim()) return;
+// }
   const [showImageOverlay, setShowImageOverlay] = useState(false);
 const [showLyricsOverlay, setShowLyricsOverlay] = useState(false);
 const lyricsOverlayRef = useRef<HTMLDivElement | null>(null);
@@ -212,7 +322,7 @@ async function connectToScreen(): Promise<void> {
   }
 }
   const [q, setQ] = useState("");
-  const [selectedHymnId, setSelectedHymnId] = useState<string | null>(null);
+  const [selectedHymnId, setSelectedHymnId] = useState<number | null>(null);
   // النص اللي راح ينعرض فول سكرين
   const [presentText, setPresentText] = useState<string | null>(null);
   const overlayRef = useRef<HTMLDivElement | null>(null);
@@ -220,14 +330,14 @@ async function connectToScreen(): Promise<void> {
   const results = useMemo(() => {
     const query = q.trim().toLowerCase();
     if (!query) return [];
-    return HYMNS.filter((h) => {
+    return hymns.filter((h) => {
       if (h.title.toLowerCase().includes(query)) return true;
-      return h.lines.some((l) => l.toLowerCase().includes(query));
+      return h.lyrics.some((l) => l.toLowerCase().includes(query));
     });
   }, [q]);
   const selectedHymn = useMemo(() => {
-    return HYMNS.find((h) => h.id === selectedHymnId) ?? null;
-  }, [selectedHymnId]);
+    return hymns.find(h => h.id === selectedHymnId) ?? null;
+  }, [hymns, selectedHymnId]);
   async function enterFullscreen() {
     const el = overlayRef.current;
     if (!el) return;
@@ -240,13 +350,6 @@ async function connectToScreen(): Promise<void> {
     } catch (e) {
       // بعض المتصفحات تحتاج user gesture قوي، بس غالباً يشتغل
       console.error(e);
-    }
-  }
-  function exitPresentation() {
-    setPresentText(null);
-    // نطلع من الفول سكرين إذا بعده شغال
-    if (document.fullscreenElement) {
-      document.exitFullscreen().catch(() => {});
     }
   }
 useEffect(() => {
@@ -269,17 +372,8 @@ useEffect(() => {
   document.addEventListener("fullscreenchange", onFsChange);
   return () => document.removeEventListener("fullscreenchange", onFsChange);
 }, [presentText]);
-
-function startPresent(text: string) {
-  setPresentText(text);
-  // ندخله fullscreen بعد ما تنرسم الـ overlay
-  setTimeout(() => enterFullscreen(), 0);
-}
   return (
     <div>
-      <Typography>
-  عدد الأسفار: {books.length}
-</Typography>
     <div className="flex justify-center items-center " >
       <Image src="/logo_transparent.png" alt="aliance church " width={100} height={100} />
       
@@ -302,34 +396,36 @@ function startPresent(text: string) {
       noValidate
       autoComplete="off"
     >
-      <TextField
+    <TextField
   value={q}
-  onChange={(e) => {
-    const v = e.target.value;
-    setQ(v);
-
-    if (!v.trim()) {
-      setHymnResults([]);
-      setBookResults([]);
-      setSelectedHymnId(null);
-      return;
-    }
-
-    setHymnResults(
-      HYMNS.filter(h =>
-        h.title.includes(v) ||
-        h.lines.some(l => l.includes(v))
-      )
-    );
-
-    setBookResults(
-      books.filter(b => b.name.includes(v))
-    );
-  }}
+  onChange={handleSearch}
+  // onKeyDown={(e) => {
+  //   if (e.key === "Enter"){
+  //     e.preventDefault(); // 🔥 هذا السطر مهم جدًا
+  //     console.log("ENTER PRESSED, q =", q);
+  //     searchBible(q);
+  //   }
+  // }}
   label="ابحث هنا"
-  variant="standard"
-/>
-{q.trim() && bookResults.length === 0 && (
+  variant="standard"/>
+{/* {result && result.type === "book" && (
+  <Box>
+    {result.chapters.map((c) => (
+      <Button
+        key={c.number}
+        onClick={() =>{
+          if (!currentBookName) return;
+          searchBible(`${currentBookName} ${c.number}`)
+        }
+        }
+      >
+        الإصحاح {c.number}
+      </Button>
+    ))}
+  </Box>
+)} */}
+
+{q.trim() &&  (
   <Typography sx={{ mt: 2, opacity: 0.7 }}>
     ماكو نتائج… جرّب كلمة ثانية
   </Typography>
@@ -349,28 +445,15 @@ function startPresent(text: string) {
     </List>
   </Box>
 )}
-{bookResults.length > 0 && (
-  <Box sx={{ mt: 2 }}>
-    <Typography fontWeight={700} sx={{ mb: 1 }}>
-      نتائج الكتاب المقدس:
-    </Typography>
-
-    <List sx={{ border: "1px solid rgba(0,0,0,0.1)", borderRadius: 2 }}>
-      {bookResults.map((book) => (
-        <ListItemButton
-          key={book.id}
-          onClick={() => {
-            // هسه بس نخلي الاسم بالحقل
-            setQ(book.name + " ");
-            setBookResults([]);
-          }}
-        >
-          <Typography>{book.name}</Typography>
-        </ListItemButton>
-      ))}
-    </List>
+{bibleResult?.type === "book" && (
+  <Box>
+    <Typography>الإصحاحات</Typography>
+    {bibleResult.chapters.map(c => (
+      <Button key={c}>{c}</Button>
+    ))}
   </Box>
 )}
+
               {selectedHymn && (
         <Box sx={{ mt: 3 }}>
           <Box sx={{ display: "flex", alignItems: "center", gap: 1, mb: 1 }}>
@@ -379,12 +462,12 @@ function startPresent(text: string) {
           </Box>
 
           <List sx={{ border: "1px solid rgba(0,0,0,0.1)", borderRadius: 2 }}>
-            {selectedHymn.lines.map((line, i) => (
+            {selectedHymn.lyrics.map((line, i) => (
               <React.Fragment key={i}>
                 <ListItemButton onClick={() => openLyricsOverlay(line)}>
                   <Typography sx={{ fontSize: 18 }}>{line}</Typography>
                 </ListItemButton>
-                {i !== selectedHymn.lines.length - 1 && <Divider />}
+                {i !== selectedHymn.lyrics.length - 1 && <Divider />}
               </React.Fragment>
             ))}
           </List>
@@ -523,16 +606,21 @@ function startPresent(text: string) {
           }}
         >
           <Box sx={{ maxWidth: 1200 }}>
-            <Typography
-              sx={{
-                fontSize: { xs: 34, md: 72 },
-                fontWeight: 900,
-                lineHeight: 1.2,
-                whiteSpace: "pre-wrap",
-              }}
-            >
-              {presentText}
-            </Typography> 
+          <Typography
+  component="div"
+  dir="rtl"
+  sx={{
+    direction: "rtl",
+    unicodeBidi: "isolate",
+    textAlign: "center",
+    fontSize: { xs: 28, md: 64 },
+    fontWeight: 800,
+    lineHeight: 1.6,
+    whiteSpace: "pre-wrap",
+  }}
+>
+  {presentText}
+</Typography>
             <Box
   sx={{
     position: "absolute",
@@ -555,7 +643,36 @@ function startPresent(text: string) {
               </Box>
             </Box>
       )}
-      
+      {presentTexts && (
+  <Box
+    ref={overlayRefs}
+    onDoubleClick={exitPresentation}
+    sx={{
+      position: "fixed",
+      inset: 0,
+      zIndex: 9999,
+      backgroundColor: "black",
+      color: "white",
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      textAlign: "center",
+      p: 6,
+      cursor: "default",
+    }}
+  >
+    <Typography
+      sx={{
+        fontSize: { xs: 28, md: 64 },
+        fontWeight: 700,
+        lineHeight: 1.3,
+        whiteSpace: "pre-wrap",
+      }}
+    >
+      {presentTexts}
+    </Typography>
+  </Box>
+)}
     </div>
   );
 }
