@@ -13,6 +13,7 @@ import {
 import DeleteIcon from '@mui/icons-material/Delete';
 import EditIcon from "@mui/icons-material/Edit";
 
+
 type Hymn = {
   id: number;
   title: string;
@@ -20,12 +21,14 @@ type Hymn = {
 };
 
 export default function AdminPage() {
+
   const [hymns, setHymns] = useState<Hymn[]>([]);
+  const [versesText, setVersesText] = useState("");
+const [chorusText, setChorusText] = useState("");
   const [title, setTitle] = useState("");
   const [lyrics, setLyrics] = useState("");
   const [editingId, setEditingId] = useState<number | null>(null);
 
- 
 
   async function fetchHymns() {
     const res = await fetch("/api/hymns");
@@ -106,6 +109,7 @@ export default function AdminPage() {
       <Button variant="contained" onClick={saveHymn}>
         {editingId ? "حفظ التعديل" : "إضافة ترنيمة"}
       </Button>
+
 
       <List sx={{ mt: 4 }}>
         {hymns.map(h => (

@@ -1,98 +1,72 @@
 import { NextResponse } from "next/server";
-import { prisma } from "../../lib/prisma";
-export async function DELETE(req: Request) {
-    try {
-      const { searchParams } = new URL(req.url);
-      const id = searchParams.get("id");
-  
-      if (!id) {
-        return NextResponse.json(
-          { error: "Missing id" },
-          { status: 400 }
-        );
-      }
-  
-      await prisma.hymn.delete({
-        where: { id: Number(id) },
-      });
-  
-      return NextResponse.json({ success: true });
-    } catch (error) {
-      console.error("❌ DELETE ERROR:", error);
-      return NextResponse.json(
-        { error: "Failed to delete hymn" },
-        { status: 500 }
-      );
-    }
-  }
-export async function PUT(req: Request) {
-    try {
-      const body = await req.json();
-      const { id, title, lyrics } = body;
-  
-      if (!id || !title || !lyrics) {
-        return NextResponse.json(
-          { error: "Missing fields" },
-          { status: 400 }
-        );
-      }
-  
-      const hymn = await prisma.hymn.update({
-        where: { id },
-        data: {
-          title,
-          lyrics,
-        },
-      });
-  
-      return NextResponse.json(hymn);
-    } catch (error) {
-      console.error("❌ UPDATE ERROR:", error);
-      return NextResponse.json(
-        { error: "Failed to update hymn" },
-        { status: 500 }
-      );
-    }
-  }
-// 🔹 GET: جلب كل الترانيم
-export async function GET() {
+import { PrismaClient } from "@prisma/client";
+
+const globalForPrisma = globalThis as unknown as { prisma?: PrismaClient };
+const prisma = globalForPrisma.prisma ?? new PrismaClient();
+if (process.env.NODE_ENV !== "production") globalForPrisma.prisma = prisma;
+
+export async function GET(req: Request) {
   try {
-    const hymns = await prisma.hymn.findMany({
-      orderBy: { createdAt: "desc" },
-    });
-    return NextResponse.json(hymns);
-  } catch (error) {
-    return NextResponse.json(
-      { error: "Failed to fetch hymns" },
-      { status: 500 }
-    );
-  }
-}
+    const { searchParams } = new URL(req.url);
 
-// 🔹 POST: إضافة ترنيمة جديدة
-export async function POST(req: Request) {
-  try {
-    const body = await req.json();
-    const { title, lyrics } = body;
+    const q = (searchParams.get("q") ?? "").trim();
+    const limitParam = Number(searchParams.get("limit") ?? "5");
+    const offsetParam = Number(searchParams.get("offset") ?? "0");
 
-    if (!title || !lyrics) {
-      return NextResponse.json(
-        { error: "Missing title or lyrics" },
-        { status: 400 }
-      );
+    const take = Number.isFinite(limitParam) ? Math.min(Math.max(limitParam, 1), 50) : 5;
+    const skip = Number.isFinite(offsetParam) ? Math.max(offsetParam, 0) : 0;
+
+    // نجيب عنصر زيادة حتى نعرف hasMore
+    const takePlus = take + 1;
+
+    if (!q) {
+      const rows = await prisma.hymn.findMany({
+        take: takePlus,
+        skip,
+        orderBy: { id: "desc" },
+      });
+
+      const items = rows.slice(0, take);
+
+      return NextResponse.json({
+        items,
+        hasMore: rows.length > take,
+        nextOffset: skip + items.length,
+      });
     }
 
-    const hymn = await prisma.hymn.create({
-      data: {
-        title,
-        lyrics,
-      },
+    const like = `%${q}%`;
+
+    type HymnRow = {
+      id: number;
+      title: string;
+      verses: string[];
+      chorus: string[] | null;
+      formatted: boolean;
+      createdAt: Date;
+      updatedAt: Date;
+    };
+    
+    const rows = await prisma.$queryRaw<HymnRow[]>`
+      SELECT id, title, verses, chorus, formatted, "createdAt", "updatedAt"
+      FROM "Hymn"
+      WHERE
+        title ILIKE ${like}
+        OR CAST(verses AS TEXT) ILIKE ${like}
+        OR CAST(chorus AS TEXT) ILIKE ${like}
+      ORDER BY id DESC
+      LIMIT ${takePlus} OFFSET ${skip}
+    `;
+
+    const items = rows.slice(0, take);
+
+    return NextResponse.json({
+      items,
+      hasMore: rows.length > take,
+      nextOffset: skip + items.length,
     });
-    return NextResponse.json(hymn);
-  } catch (error) {
-    return NextResponse.json(
-      { error: "Failed to create hymn" },
-      { status: 500 }
-    );
+  } catch (err) {
+    console.error("API /api/hymns GET error:", err);
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }
