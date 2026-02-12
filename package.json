@@ -9,6 +9,9 @@
     "postinstall": "prisma generate",
     "lint": "eslint"
   },
+  "prisma": {
+  "schema": "prisma/schema.prisma"
+},
   "dependencies": {
     "@emotion/react": "^11.14.0",
     "@emotion/styled": "^11.14.1",
