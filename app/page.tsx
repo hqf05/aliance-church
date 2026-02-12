@@ -60,13 +60,11 @@ function buildHymnWithChorus(
 export default function Home() {
   const [searchOffset, setSearchOffset] = useState(0);
 const [hasMore, setHasMore] = useState(false);
-
   const [showBlackOverlay, setShowBlackOverlay] = useState(false);
   const blackRef = useRef<HTMLDivElement | null>(null);
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
   const [playlist, setPlaylist] = useState<Hymn[]>([]);
 const [activeHymnId, setActiveHymnId] = useState<number | null>(null);
-const [activeLine, setActiveLine] = useState<string | null>(null);
   const [presentTexts, setPresentTexts] = useState<string | null>(null);
   const [nextOffset, setNextOffset] = useState(0);
 const overlayRefs = useRef<HTMLDivElement | null>(null);
@@ -118,14 +116,6 @@ const overlayRefs = useRef<HTMLDivElement | null>(null);
     setTimeout(() => {
       blackRef.current?.requestFullscreen().catch(() => {});
     }, 0);
-  }
-  
-  function closeBlackScreen() {
-    setShowBlackOverlay(false);
-    
-    if (document.fullscreenElement) {
-      document.exitFullscreen().catch(() => {});
-    }
   }
   function toggleSelect(id: number) {
     setSelectedIds((prev) =>
