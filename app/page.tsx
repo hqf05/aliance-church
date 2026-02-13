@@ -222,36 +222,21 @@ useEffect(() => {
 async function handleSearch(e: React.ChangeEvent<HTMLInputElement>) {
   const v = e.target.value;
   setQ(v);
+
   if (!v.trim()) {
     setHymnResults([]);
     setHasMore(false);
-    setSearchOffset(0);
+    setNextOffset(0);
     return;
   }
-  
-  runSearch(v, 0, false);
+
   try {
     const res = await fetch(`/api/hymns?q=${encodeURIComponent(v)}&limit=5&offset=0`);
-    const raw = await res.text(); // 👈 اقرأ كنص أولاً
-    console.log("API /api/hymns status:", res.status);
-    console.log("API /api/hymns raw:", raw);
+    const data = await res.json();
 
-    if (!res.ok) {
-      // إذا السيرفر رجّع خطأ، نعرضه واضح
-      throw new Error(raw || `Request failed: ${res.status}`);
-    }
-
-    if (!raw) {
-      // إذا رجّع فاضي
-      setHymnResults([]);
-      return;
-    }
-
-    const data = JSON.parse(raw);
     setHymnResults(data.items ?? []);
     setHasMore(Boolean(data.hasMore));
     setNextOffset(Number(data.nextOffset ?? 0));
-  
   } catch (err) {
     console.error("handleSearch error:", err);
     setHymnResults([]);
@@ -693,7 +678,7 @@ const hymnParts = selectedHymn
       sx={{
         position: "absolute",
         inset: 0,
-        backgroundImage: "url('/chirstmas.jpeg')", // GIF / صورة / فيديو
+        backgroundImage: "url('/church1.jpeg')", // GIF / صورة / فيديو
         backgroundSize: "cover",
         backgroundPosition: "center",
         backgroundRepeat: "no-repeat",

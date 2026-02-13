@@ -3,15 +3,9 @@ import { PrismaClient } from "@prisma/client";
 
 const globalForPrisma = globalThis as unknown as { prisma?: PrismaClient };
 const prisma = globalForPrisma.prisma ?? new PrismaClient();
-
-if (process.env.NODE_ENV !== "production") {
-  globalForPrisma.prisma = prisma;
-}
+if (process.env.NODE_ENV !== "production") globalForPrisma.prisma = prisma;
 
 export async function GET(req: Request) {
-  console.log("✅ DATABASE_URL =", process.env.DATABASE_URL);
-const total = await prisma.hymn.count();
-console.log("✅ Hymn count =", total);
   try {
     const { searchParams } = new URL(req.url);
 
@@ -19,26 +13,21 @@ console.log("✅ Hymn count =", total);
     const limitParam = Number(searchParams.get("limit") ?? "5");
     const offsetParam = Number(searchParams.get("offset") ?? "0");
 
-    const take = Number.isFinite(limitParam)
-      ? Math.min(Math.max(limitParam, 1), 50)
-      : 5;
-
-    const skip = Number.isFinite(offsetParam)
-      ? Math.max(offsetParam, 0)
-      : 0;
+    const take = Number.isFinite(limitParam) ? Math.min(Math.max(limitParam, 1), 50) : 5;
+    const skip = Number.isFinite(offsetParam) ? Math.max(offsetParam, 0) : 0;
 
     const takePlus = take + 1;
 
-    // ✅ إذا ماكو بحث
+    // ✅ إذا ماكو q رجّع آخر ترانيم
     if (!q) {
       const rows = await prisma.hymn.findMany({
+        select: { id: true, title: true, formatted: true },
+        orderBy: { id: "desc" },
         take: takePlus,
         skip,
-        orderBy: { title: "asc" },
       });
 
       const items = rows.slice(0, take);
-
       return NextResponse.json({
         items,
         hasMore: rows.length > take,
@@ -46,24 +35,16 @@ console.log("✅ Hymn count =", total);
       });
     }
 
-    // ✅ بحث يبدأ بالحرف فقط
-    const like = `${q}%`;
+    // ✅ بحث Prefix: يبدي بالحرف/الكلمة (مع تجاهل المسافات بالبداية)
+    const prefix = `${q}%`;
 
-    type HymnRow = {
-      id: number;
-      title: string;
-      verses: unknown;
-      chorus: unknown;
-      formatted: boolean;
-      createdAt: Date;
-      updatedAt: Date;
-    };
-
-    const rows = await prisma.$queryRaw<HymnRow[]>`
-      SELECT id, title, verses, chorus, formatted, "createdAt", "updatedAt"
+    const rows = await prisma.$queryRaw<
+      { id: number; title: string; formatted: boolean }[]
+    >`
+      SELECT id, title, formatted
       FROM "Hymn"
-      WHERE ltrim(title) ILIKE ${like}
-      ORDER BY ltrim(title) ASC
+      WHERE ltrim(title) ILIKE ${prefix}
+      ORDER BY id ASC
       LIMIT ${takePlus} OFFSET ${skip}
     `;
 
@@ -74,12 +55,8 @@ console.log("✅ Hymn count =", total);
       hasMore: rows.length > take,
       nextOffset: skip + items.length,
     });
-
   } catch (err) {
-    console.error("API ERROR:", err);
-    return NextResponse.json(
-      { error: "Internal server error" },
-      { status: 500 }
-    );
+    console.error("API /api/hymns GET error:", err);
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }
