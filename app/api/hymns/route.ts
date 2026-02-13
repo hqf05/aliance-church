@@ -6,7 +6,9 @@ const prisma = globalForPrisma.prisma ?? new PrismaClient();
 if (process.env.NODE_ENV !== "production") globalForPrisma.prisma = prisma;
 
 export async function GET(req: Request) {
+  
   try {
+    
     const { searchParams } = new URL(req.url);
 
     const q = (searchParams.get("q") ?? "").trim();
@@ -21,11 +23,12 @@ export async function GET(req: Request) {
     // ✅ إذا ماكو q رجّع آخر ترانيم
     if (!q) {
       const rows = await prisma.hymn.findMany({
-        select: { id: true, title: true, formatted: true },
+        select: { id: true, title: true, verses: true, chorus: true, formatted: true },
         orderBy: { id: "desc" },
         take: takePlus,
         skip,
-      });
+
+      } );
 
       const items = rows.slice(0, take);
       return NextResponse.json({

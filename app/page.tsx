@@ -39,7 +39,7 @@ function buildHymnWithChorus(
   chorus: string[]
 ) {
   const result: { type: "verse" | "chorus"; lines: string[] }[] = [];
-
+  console.log("verses =", verses);
   verses.forEach((line) => {
     // كل سطر نعتبره مقطع
     result.push({
@@ -71,6 +71,46 @@ const overlayRefs = useRef<HTMLDivElement | null>(null);
   const BIBLE_ID = process.env.BIBLEID!;
   const [hymns, setHymns] = useState<Hymn[]>([]);
   const [hymnResults, setHymnResults] = useState<Hymn[]>([]);
+  async function addToPlaylistById(id: number) {
+    console.log("🟡 addToPlaylistById called with:", id);
+    const res = await fetch(`/api/hymns/${id}`);
+const raw = await res.text();
+
+console.log("🌐 /api/hymns/[id] status:", res.status);
+console.log("📦 /api/hymns/[id] raw:", raw);
+
+if (!res.ok) {
+  console.error("❌ Failed to fetch hymn by id", id);
+  return;
+}
+
+JSON.parse(raw);
+  
+    // 1) جرّب من hymns أولاً (إذا متوفر)
+    let full = hymns.find(x => x.id === id) ?? null;
+  
+    // 2) إذا ما لقاها، جيبها من السيرفر
+    if (!full) {
+      const res = await fetch(`/api/hymns/${id}`);
+      if (!res.ok) {
+        console.error("❌ Failed to fetch hymn by id", id);
+        return;
+      }
+      full = await res.json();
+    }
+  
+    if (!full) return;
+  
+    setPlaylist(prev => {
+      if (prev.some(p => p.id === full!.id)) return prev;
+      return [...prev, full!];
+    });
+  
+    setActiveHymnId(full.id);
+    setSelectedHymnId(full.id);
+  
+    console.log("✅ Added to playlist:", full.title);
+  }
   async function loadMore() {
     const res = await fetch(`/api/hymns?q=${encodeURIComponent(q)}&limit=5&offset=${nextOffset}`);
     const data = await res.json();
@@ -181,14 +221,23 @@ const overlayRefs = useRef<HTMLDivElement | null>(null);
       chorus: verses.slice(chorusIndex + 1),
     };
   }
-function addToPlaylist(hymn: Hymn) {
-  setPlaylist((prev) => {
-    if (prev.find((h) => h.id === hymn.id)) return prev; // منع التكرار
-    return [...prev, hymn];
-  });
-
-  setActiveHymnId(hymn.id);
-}
+  function addToPlaylist(h: Hymn) {
+    // جيب الترنيمة الكاملة من hymns حسب id
+    const full = hymns.find(x => x.id === h.id) ?? null;
+  
+    if (!full) {
+      console.warn("⚠️ addToPlaylist: full hymn not found for id", h.id);
+      return;
+    }
+  
+    setPlaylist(prev => {
+      if (prev.some(p => p.id === full.id)) return prev;
+      return [...prev, full];
+    });
+  
+    setActiveHymnId(full.id);
+    setSelectedHymnId(full.id); // حتى يصير كلشي متزامن
+  }
 useEffect(() => {
   const handleKey = (e: KeyboardEvent) => {
     if (e.key === "Escape") {
@@ -355,7 +404,9 @@ async function connectToScreen(): Promise<void> {
   const overlayRef = useRef<HTMLDivElement | null>(null);
   const selectedHymn = useMemo<Hymn | null>(() => {
     return hymns.find((h) => h.id === selectedHymnId) ?? null;
-  }, [selectedHymnId, hymns]);  
+  }, [selectedHymnId, hymns]); 
+  console.log("ACTIVE:", activeHymn?.id, "verses?", Array.isArray(activeHymn?.verses));
+console.log("PLAYLIST[0]:", playlist[0]); 
   const hymnView = activeHymn
   ? buildHymnWithChorus(
       activeHymn.verses,
@@ -467,11 +518,11 @@ const hymnParts = selectedHymn
       {hymnResults.map(h => (
         <ListItemButton
           key={h.id}
-          onClick={() => {setSelectedHymnId(h.id);
+          onClick={() => {
             setHymnResults([]);
-            setQ("");  
-            addToPlaylist(h);
-          }}
+            setQ("");
+            addToPlaylistById(h.id);
+                    }}
         >
           <Typography>{h.title}</Typography>
         </ListItemButton>
