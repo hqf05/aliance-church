@@ -4,7 +4,7 @@ import Box from '@mui/material/Box';
 import TextField from '@mui/material/TextField';
 import Stack from '@mui/material/Stack';
 import Button from '@mui/material/Button';
-import { useEffect, useMemo, useRef, useState } from "react";
+import { use, useEffect, useMemo, useRef, useState } from "react";
 import { Typography } from "@mui/material";
 import List from '@mui/material/List';
 import React from "react";
@@ -222,13 +222,13 @@ useEffect(() => {
 async function handleSearch(e: React.ChangeEvent<HTMLInputElement>) {
   const v = e.target.value;
   setQ(v);
-
   if (!v.trim()) {
     setHymnResults([]);
     setHasMore(false);
     setSearchOffset(0);
     return;
   }
+  
   runSearch(v, 0, false);
   try {
     const res = await fetch(`/api/hymns?q=${encodeURIComponent(v)}&limit=5&offset=0`);

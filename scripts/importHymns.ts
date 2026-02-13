@@ -1,4 +1,4 @@
-import { PrismaClient,Prisma } from "@prisma/client";
+import { PrismaClient, Prisma } from "@prisma/client";
 import fs from "fs";
 import path from "path";
 
@@ -10,9 +10,11 @@ type HymnJSON = {
   chorus?: string[] | null;
   formated?: boolean;
 };
+
 function toJson(value: unknown): Prisma.InputJsonValue {
   return value as Prisma.InputJsonValue;
 }
+
 async function main() {
   const filePath = path.join(process.cwd(), "app", "data", "tasbe7naDB.json");
   const raw = fs.readFileSync(filePath, "utf-8");
@@ -22,16 +24,14 @@ async function main() {
     await prisma.hymn.create({
       data: {
         title: hymn.title,
-        verses:hymn.verses as Prisma.InputJsonValue,             // ✅ Array of arrays
-        chorus: hymn.chorus
-        ? (hymn.chorus as Prisma.InputJsonValue)
-        : Prisma.JsonNull,   // ✅ هذا هو السر
+        verses: toJson(hymn.verses),
+        chorus: hymn.chorus ? toJson(hymn.chorus) : Prisma.DbNull, // ✅ هذا الصح
         formatted: hymn.formated ?? false,
       },
     });
   }
 
-  console.log("✅ Hymns imported WITH chorus");
+  console.log("✅ Imported hymns (chorus ok)");
 }
 
 main()
