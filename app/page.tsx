@@ -813,6 +813,6 @@ const hymnParts = selectedHymn
     }}
   />
 )}
-<p>عدد الترانيم: {hymns.length}</p>
+{/* <p>عدد الترانيم: {hymns.length}</p> */}
     </div>);
 }
