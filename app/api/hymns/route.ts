@@ -6,48 +6,52 @@ const prisma = globalForPrisma.prisma ?? new PrismaClient();
 if (process.env.NODE_ENV !== "production") globalForPrisma.prisma = prisma;
 
 export async function GET(req: Request) {
-  
   try {
-    
     const { searchParams } = new URL(req.url);
 
     const q = (searchParams.get("q") ?? "").trim();
-    const limitParam = Number(searchParams.get("limit") ?? "5");
+    const limitParam = Number(searchParams.get("limit") ?? "10");
     const offsetParam = Number(searchParams.get("offset") ?? "0");
 
-    const take = Number.isFinite(limitParam) ? Math.min(Math.max(limitParam, 1), 50) : 5;
+    const take = Number.isFinite(limitParam) ? Math.min(Math.max(limitParam, 1), 50) : 10;
     const skip = Number.isFinite(offsetParam) ? Math.max(offsetParam, 0) : 0;
 
-    const takePlus = take + 1;
-
-    // ✅ إذا ماكو q رجّع آخر ترانيم
+    // إذا ماكو q رجّع آخر ترانيم
     if (!q) {
       const rows = await prisma.hymn.findMany({
-        select: { id: true, title: true, verses: true, chorus: true, formatted: true },
-        orderBy: { id: "desc" },
-        take: takePlus,
+        take,
         skip,
+        orderBy: { id: "desc" },
+      });
 
-      } );
-
-      const items = rows.slice(0, take);
       return NextResponse.json({
-        items,
-        hasMore: rows.length > take,
-        nextOffset: skip + items.length,
+        items: rows,
+        hasMore: rows.length === take,
+        nextOffset: skip + rows.length,
       });
     }
 
-    // ✅ بحث Prefix: يبدي بالحرف/الكلمة (مع تجاهل المسافات بالبداية)
-    const prefix = `${q}%`;
+    // ✅ Prefix search: يبدي بالحرف/الكلمة
+    const likePrefix = `${q}%`; // "ب%"
 
-    const rows = await prisma.$queryRaw<
-      { id: number; title: string; formatted: boolean }[]
-    >`
-      SELECT id, title, formatted
+    // نجيب عنصر زيادة حتى نعرف hasMore
+    const takePlus = take + 1;
+
+    type HymnRow = {
+      id: number;
+      title: string;
+      verses: unknown;
+      chorus: unknown;
+      formatted: boolean;
+      createdAt: Date;
+      updatedAt: Date;
+    };
+
+    const rows = await prisma.$queryRaw<HymnRow[]>`
+      SELECT id, title, verses, chorus, formatted, "createdAt", "updatedAt"
       FROM "Hymn"
-      WHERE ltrim(title) ILIKE ${prefix}
-      ORDER BY id ASC
+      WHERE ltrim(title) ILIKE ${likePrefix}
+      ORDER BY id DESC
       LIMIT ${takePlus} OFFSET ${skip}
     `;
 

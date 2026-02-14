@@ -4,7 +4,7 @@ import Box from '@mui/material/Box';
 import TextField from '@mui/material/TextField';
 import Stack from '@mui/material/Stack';
 import Button from '@mui/material/Button';
-import { use, useEffect, useMemo, useRef, useState } from "react";
+import {  useEffect, useMemo, useRef, useState } from "react";
 import { Typography } from "@mui/material";
 import List from '@mui/material/List';
 import React from "react";
@@ -58,7 +58,8 @@ function buildHymnWithChorus(
   return result;
 }
 export default function Home() {
-  const [searchOffset, setSearchOffset] = useState(0);
+  const [showImageOverlay, setShowImageOverlay] = useState(false);
+  const [text, setText] = useState<string>("");
 const [hasMore, setHasMore] = useState(false);
   const [showBlackOverlay, setShowBlackOverlay] = useState(false);
   const blackRef = useRef<HTMLDivElement | null>(null);
@@ -67,8 +68,6 @@ const [hasMore, setHasMore] = useState(false);
 const [activeHymnId, setActiveHymnId] = useState<number | null>(null);
   const [presentTexts, setPresentTexts] = useState<string | null>(null);
   const [nextOffset, setNextOffset] = useState(0);
-const overlayRefs = useRef<HTMLDivElement | null>(null);
-  const BIBLE_ID = process.env.BIBLEID!;
   const [hymns, setHymns] = useState<Hymn[]>([]);
   const [hymnResults, setHymnResults] = useState<Hymn[]>([]);
   async function addToPlaylistById(id: number) {
@@ -119,34 +118,6 @@ JSON.parse(raw);
     setHasMore(Boolean(data.hasMore));
     setNextOffset(Number(data.nextOffset ?? nextOffset));
   }
-  async function runSearch(query: string, offset = 0, append = false) {
-    try {
-      const res = await fetch(
-        `/api/hymns?q=${encodeURIComponent(query)}&limit=5&offset=${offset}`
-      );
-  
-      const data = await res.json();
-      const items = Array.isArray(data.items) ? data.items : [];
-      // إذا API رجّع error
-      if (!res.ok || !data || !Array.isArray(data.items)) {
-        setHymnResults([]);
-        setHasMore(false);
-        setSearchOffset(0);
-        return;
-      }
-  
-      setHasMore(Boolean(data.hasMore));
-      setSearchOffset(Number(data.nextOffset ?? 0));
-  
-      setHymnResults(prev => append ? [...prev, ...items] : items);
-    } catch (e) {
-      console.error(e);
-      setHymnResults([]);
-      setHasMore(false);
-      setSearchOffset(0);
-    }
-  }
-  
   async function openBlackScreen() {
     setShowBlackOverlay(true);
     setShowLyricsOverlay(false); // إذا تريد تطفي الكلمات
@@ -221,23 +192,6 @@ JSON.parse(raw);
       chorus: verses.slice(chorusIndex + 1),
     };
   }
-  function addToPlaylist(h: Hymn) {
-    // جيب الترنيمة الكاملة من hymns حسب id
-    const full = hymns.find(x => x.id === h.id) ?? null;
-  
-    if (!full) {
-      console.warn("⚠️ addToPlaylist: full hymn not found for id", h.id);
-      return;
-    }
-  
-    setPlaylist(prev => {
-      if (prev.some(p => p.id === full.id)) return prev;
-      return [...prev, full];
-    });
-  
-    setActiveHymnId(full.id);
-    setSelectedHymnId(full.id); // حتى يصير كلشي متزامن
-  }
 useEffect(() => {
   const handleKey = (e: KeyboardEvent) => {
     if (e.key === "Escape") {
@@ -307,16 +261,10 @@ useEffect(() => {
   window.addEventListener("keydown", onKeyDown);
   return () => window.removeEventListener("keydown", onKeyDown);
 }, []);
-function exitPresentation() {
-  setPresentText(null);
-  if (document.fullscreenElement) {
-    document.exitFullscreen().catch(() => {});
-  }
-}
 const activeHymn = useMemo(() => {
   return playlist.find(h => h.id === activeHymnId) ?? null;
 }, [playlist, activeHymnId]);
-  const [showImageOverlay, setShowImageOverlay] = useState(false);
+  
 const [showLyricsOverlay, setShowLyricsOverlay] = useState(false);
 const lyricsOverlayRef = useRef<HTMLDivElement | null>(null);
 const imageOverlayRef = useRef<HTMLDivElement | null>(null);
@@ -330,7 +278,14 @@ async function openImageOverlay() {
 }
 
 async function openLyricsOverlay(text: string) {
-  setShowImageOverlay(false); // طفي الخلفية
+  // إذا Electron موجود
+  if (typeof window !== "undefined" && window.electronAPI?.presentText) {
+    await window.electronAPI.presentText({ text });
+    return;
+  }
+  window.electronAPI?.presentText?.({ text });
+  // Browser fallback
+  setShowImageOverlay(false);
   setShowLyricsOverlay(true);
   setPresentText(text);
 
@@ -347,55 +302,16 @@ function closeAllOverlays() {
     document.exitFullscreen().catch(() => {});
   }
 }
-async function connectToScreen(): Promise<void> {
-  if (!window.getScreens) {
-    alert("المتصفح لا يدعم اختيار الشاشات (جرّب Chrome)");
+async function connectToScreen() {
+  // داخل Electron فقط
+  
+  if (window.electronAPI?.sendToScreen) {
+    window.electronAPI.sendToScreen(text);
     return;
   }
-
-  try {
-    const screens = await window.getScreens();
-
-    const externalScreen = screens.find(
-      (screen) => !screen.isPrimary
-    );
-
-    if (!externalScreen) {
-      alert("ماكو شاشة ثانية (HDMI)");
-      return;
-    }
-
-    const win = window.open(
-      "/screen",
-      "_blank",
-      `
-      left=${externalScreen.availLeft},
-      top=${externalScreen.availTop},
-      width=${externalScreen.availWidth},
-      height=${externalScreen.availHeight}
-      `
-    );
-
-    if (!win) {
-      alert("الرجاء السماح بفتح النوافذ المنبثقة");
-      return;
-    }
-
-    setTimeout(() => {
-      win.moveTo(
-        externalScreen.availLeft,
-        externalScreen.availTop
-      );
-      win.resizeTo(
-        externalScreen.availWidth,
-        externalScreen.availHeight
-      );
-    }, 300);
-
-  } catch (err) {
-    console.error(err);
-    alert("فشل الاتصال بالشاشة");
-  }
+  // أو إذا عندك presentText:
+  window.electronAPI?.presentText?.({ text: "" });
+  alert("هذي الميزة تشتغل بتطبيق Electron مو بالمتصفح");
 }
   const [q, setQ] = useState("");
   const [selectedHymnId, setSelectedHymnId] = useState<number | null>(null);
@@ -444,14 +360,7 @@ console.log(selectedHymn);
 console.log(
   selectedHymn?.title,
   selectedHymn?.chorus
-);
-const hymnParts = selectedHymn
-  ? splitVersesAndChorus(
-      selectedHymn.verses,
-      selectedHymn.formatted
-    )
-  : { verses: [], chorus: [] };
-  
+);  
   return (
     <div>
     <div className="flex justify-center items-center " >
@@ -473,19 +382,14 @@ const hymnParts = selectedHymn
   شاشة سوداء
 </Button>
       <Button onClick={connectToScreen}   color="error" size="large" variant="contained">ربط الشاشة </Button>
-      
       <Button onClick={openImageOverlay} color="error" size="large"  variant="outlined">شاشة خلفية </Button>
-      
-
     </Stack>
-    
     <Box
       component="form"
       sx={{ '& > :not(style)': { m: 1, maxWidth:400, mt:3 ,  height:"auto" } , display:"flex" , justifyContent:"center" , alignSelf:"flex-start" }}
       noValidate
       autoComplete="off"
     >
-      
     <TextField
     fullWidth
   value={q}
@@ -566,13 +470,13 @@ const hymnParts = selectedHymn
       p: 2,
       minHeight: 200,
     }}
-  >
+  >  
 {hymnView.map((block, i) => (
   <Box key={i} sx={{ mb: 2 }}>
     {block.lines.map((line, j) => (
       <ListItemButton
         key={j}
-        onClick={() => openLyricsOverlay(line)}
+        onClick={() =>  openLyricsOverlay(Array.isArray(line) ? line.join("\n") : line)}
       >
         <Typography
           sx={{
@@ -586,11 +490,9 @@ const hymnParts = selectedHymn
         </Typography>
       </ListItemButton>
     ))}
-   
   </Box>
 ))}
   </Box>
-
   {/* اليمين: اختر ترنيمة */}
   <Box
     sx={{
