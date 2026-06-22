@@ -1,4 +1,3 @@
-// types/electron.d.ts
 export {};
 
 type Hymn = {
@@ -14,35 +13,29 @@ type Hymn = {
 declare global {
   interface Window {
     electronAPI?: {
-      // شاشة العرض
       openScreenWindow: () => Promise<void>;
       closeScreenWindow: () => Promise<void>;
-
-      // إرسال نص
-      presentText: (payload: { text: string }) => Promise<void>;
+      presentText: (payload: {
+        text: string;
+        lines?: string[];
+        index?: number;
+      }) => Promise<void>;
       sendToScreen: (text: string) => void;
-
-      // شاشة الشعار
+      navigate: (direction: "next" | "prev") => Promise<void>;
+      notifyLineChanged: (index: number) => void;
       showIdle: () => Promise<void>;
-
-      // الشاشة السوداء
       setBlack: (isBlack: boolean) => Promise<void>;
-
-      // الخط
       changeFont: (delta: number) => void;
       resetFont: () => void;
-
-      // استقبال أحداث
       onPresentText: (cb: (text: string) => void) => void;
+      onLoadLines: (cb: (data: { lines: string[]; index: number }) => void) => void;
+      onNavigate: (cb: (dir: "next" | "prev") => void) => void;
       onBlack: (cb: (isBlack: boolean) => void) => void;
       onFont: (cb: (delta: number) => void) => void;
       onResetFont: (cb: () => void) => void;
       onShowIdle: (cb: () => void) => void;
-
-      // تنظيف
+      onLineChanged: (cb: (index: number) => void) => void;
       removeAllListeners: (channel: string) => void;
-
-      // ترانيم
       getHymns: () => Promise<Hymn[]>;
     };
   }
