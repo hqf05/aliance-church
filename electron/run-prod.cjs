@@ -1,25 +1,53 @@
+// electron/run-prod.cjs
 const { spawn } = require("child_process");
 const path = require("path");
+const waitOn = require("wait-on");
+function pickPort() {
+  // خليها ثابتة اذا تحب، بس أنا أخلي 3123 حتى ما تتعارك ويا 3000
+  return process.env.PORT ? Number(process.env.PORT) : 3123;
+}
 
-const nextBin = path.join(__dirname, "..", "node_modules", ".bin", process.platform === "win32" ? "next.cmd" : "next");
+async function main() {
+  const port = pickPort();
+  const cwd = path.join(__dirname, "..");
 
-const nextServer = spawn(nextBin, ["start", "-p", "3000"], {
-  cwd: path.join(__dirname, ".."),
-  stdio: "inherit",
-  env: { ...process.env, NODE_ENV: "production" },
-});
+  // 1) شغّل next start
+  const nextProc = spawn(
+    process.platform === "win32" ? "npx.cmd" : "npx",
+    ["next", "start", "-p", String(port)],
+    { cwd, stdio: "inherit", env: { ...process.env } }
+  );
 
-nextServer.on("error", (err) => console.error("Next start error:", err));
-
-setTimeout(() => {
-  const electronBin = path.join(__dirname, "..", "node_modules", ".bin", process.platform === "win32" ? "electron.cmd" : "electron");
-  spawn(electronBin, ["electron/main.cjs"], {
-    cwd: path.join(__dirname, ".."),
-    stdio: "inherit",
-    env: {
-      ...process.env,
-      ELECTRON_START_URL: "http://localhost:3000",
-      ELECTRON_SCREEN_URL: "http://localhost:3000/screen",
-    },
+  // 2) انتظر السيرفر يشتغل
+  await waitOn({
+    resources: [`http://localhost:${port}`],
+    timeout: 60000,
   });
-}, 2000);
+
+  // 3) شغّل electron ومرر الروابط
+  const electronProc = spawn(
+    process.platform === "win32" ? "npx.cmd" : "npx",
+    [
+      "electron",
+      ".",
+    ],
+    {
+      cwd,
+      stdio: "inherit",
+      env: {
+        ...process.env,
+        ELECTRON_START_URL: `http://localhost:${port}`,
+        ELECTRON_SCREEN_URL: `http://localhost:${port}/screen`,
+      },
+    }
+  );
+
+  electronProc.on("close", () => {
+    nextProc.kill();
+  });
+}
+
+main().catch((e) => {
+  console.error("⨯ Failed to start server", e);
+  process.exit(1);
+});

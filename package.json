@@ -13,8 +13,26 @@
     "dev:electron": "concurrently \"next dev\" \"wait-on http://localhost:3000 && npm run electron\"",
     "prod:electron": "node electron/run-prod.cjs",
     "pack": "next build && electron-builder --dir",
-    "dist": "next build && electron-builder"
-
+    "dist": "next build && electron-builder",
+    "dist:mac": "npm run build && electron-builder --mac",
+    "pack:mac": "npm run build && electron-builder --mac --dir"
+  },
+  "build": {
+    "appId": "com.aliance.church",
+    "productName": "Aliance Church",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "electron/**/*",
+      ".next/**/*",
+      "public/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": "nsis",
+      "icon": "build/icon.ico"
+    }
   },
   "prisma": {
     "schema": "prisma/schema.prisma"
@@ -39,6 +57,7 @@
     "concurrently": "^9.2.1",
     "cross-env": "^10.1.0",
     "electron": "^40.4.0",
+    "electron-builder": "^26.7.0",
     "eslint": "^9",
     "eslint-config-next": "16.0.10",
     "tailwindcss": "^4",

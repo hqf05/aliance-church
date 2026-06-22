@@ -31,7 +31,7 @@ async function main() {
 
     const r = await prisma.hymn.createMany({
       data: chunk,
-      skipDuplicates: true, // ✅ هذا يخليها تكمل
+      
     });
     console.log(`✅ inserted ${r.count} (batch ${i} → ${i + chunk.length})`);
   }

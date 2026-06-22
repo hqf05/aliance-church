@@ -1,23 +1,21 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { PrismaClient } from "@prisma/client";
 
-const prisma = new PrismaClient();
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
-export async function GET(req: Request) {
-  // مثال: /api/hymns/2731
-  const url = new URL(req.url);
-  const parts = url.pathname.split("/").filter(Boolean); // ["api","hymns","2731"]
-  const idStr = parts.at(-1) || "";
+const globalForPrisma = globalThis as unknown as { prisma?: PrismaClient };
+const prisma = globalForPrisma.prisma ?? new PrismaClient();
+if (process.env.NODE_ENV !== "production") globalForPrisma.prisma = prisma;
 
-  console.log("✅ HIT /api/hymns/[id]");
-  console.log("pathname =", url.pathname);
-  console.log("idStr =", idStr);
+export async function GET(
+  _req: NextRequest,
+  ctx: { params: Promise<{ id: string }> }
+) {
+  const { id: idStr } = await ctx.params; // ✅ مهم: await
 
-  if (!/^\d+$/.test(idStr)) {
-    return NextResponse.json(
-      { error: "Bad id", got: idStr || null },
-      { status: 400 }
-    );
+  if (!idStr || !/^\d+$/.test(idStr)) {
+    return NextResponse.json({ error: "Bad id" }, { status: 400 });
   }
 
   const id = Number(idStr);

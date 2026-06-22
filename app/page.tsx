@@ -4,717 +4,424 @@ import Box from '@mui/material/Box';
 import TextField from '@mui/material/TextField';
 import Stack from '@mui/material/Stack';
 import Button from '@mui/material/Button';
-import {  useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Typography } from "@mui/material";
 import List from '@mui/material/List';
 import React from "react";
 import ListItemButton from '@mui/material/ListItemButton';
 import Checkbox from '@mui/material/Checkbox';
 import DeleteIcon from '@mui/icons-material/Delete';
+
 type Hymn = {
   id: number;
   title: string;
   verses: string[];
   chorus?: string[] | null;
-  chorusFirst?: boolean; 
+  chorusFirst?: boolean;
   formatted: boolean;
   createdAt: string;
 };
-type ScreenInfo = {
-  isPrimary: boolean;
-  availLeft: number;
-  availTop: number;
-  availWidth: number;
-  availHeight: number;
-};
 
-// نضيف getScreens للـ window (لأنها API تجريبية)
-declare global {
-  interface Window {
-    getScreens?: () => Promise<ScreenInfo[]>;
-  }
-}
-function buildHymnWithChorus(
-  verses: string[],
-  chorus: string[]
-) {
+function buildHymnWithChorus(verses: string[], chorus: string[]) {
   const result: { type: "verse" | "chorus"; lines: string[] }[] = [];
-  console.log("verses =", verses);
   verses.forEach((line) => {
-    // كل سطر نعتبره مقطع
-    result.push({
-      type: "verse",
-      lines: [line],
-    });
-
-    if (chorus.length > 0) {
-      result.push({
-        type: "chorus",
-        lines: chorus,
-      });
-    }
+    result.push({ type: "verse", lines: [line] });
+    if (chorus.length > 0) result.push({ type: "chorus", lines: chorus });
   });
-
   return result;
 }
+
+function flattenHymnView(hymnView: { type: "verse" | "chorus"; lines: string[] }[]): string[] {
+  const flat: string[] = [];
+  hymnView.forEach((block) => {
+    block.lines.forEach((line) => {
+      flat.push(Array.isArray(line) ? (line as string[]).join("\n") : line);
+    });
+  });
+  return flat;
+}
+
+const btnStyle: React.CSSProperties = {
+  width: 44, height: 38, borderRadius: 10,
+  border: "1px solid rgba(255,255,255,0.25)",
+  background: "rgba(0,0,0,0.35)", color: "white", fontSize: 20, cursor: "pointer",
+};
+
 export default function Home() {
+  const [fontScale, setFontScale] = useState(1);
+  const MIN = 0.6; const MAX = 1.8; const STEP = 0.1;
+  const zoomIn = () => setFontScale(s => Math.min(MAX, +(s + STEP).toFixed(2)));
+  const zoomOut = () => setFontScale(s => Math.max(MIN, +(s - STEP).toFixed(2)));
+  const zoomReset = () => setFontScale(1);
+
   const [showImageOverlay, setShowImageOverlay] = useState(false);
   const [text, setText] = useState<string>("");
-const [hasMore, setHasMore] = useState(false);
+  const [hasMore, setHasMore] = useState(false);
   const [showBlackOverlay, setShowBlackOverlay] = useState(false);
   const blackRef = useRef<HTMLDivElement | null>(null);
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
   const [playlist, setPlaylist] = useState<Hymn[]>([]);
-const [activeHymnId, setActiveHymnId] = useState<number | null>(null);
+  const [activeHymnId, setActiveHymnId] = useState<number | null>(null);
   const [presentTexts, setPresentTexts] = useState<string | null>(null);
   const [nextOffset, setNextOffset] = useState(0);
   const [hymns, setHymns] = useState<Hymn[]>([]);
   const [hymnResults, setHymnResults] = useState<Hymn[]>([]);
-  async function addToPlaylistById(id: number) {
-    console.log("🟡 addToPlaylistById called with:", id);
-    const res = await fetch(`/api/hymns/${id}`);
-const raw = await res.text();
+  const [q, setQ] = useState("");
+  const [selectedHymnId, setSelectedHymnId] = useState<number | null>(null);
+  const [presentText, setPresentText] = useState<string | null>(null);
+  const [showLyricsOverlay, setShowLyricsOverlay] = useState(false);
+  const lyricsOverlayRef = useRef<HTMLDivElement | null>(null);
+  const imageOverlayRef = useRef<HTMLDivElement | null>(null);
 
-console.log("🌐 /api/hymns/[id] status:", res.status);
-console.log("📦 /api/hymns/[id] raw:", raw);
+  // ✅ تتبع السطر الحالي
+  const [currentLineIndex, setCurrentLineIndex] = useState<number>(-1);
 
-if (!res.ok) {
-  console.error("❌ Failed to fetch hymn by id", id);
-  return;
-}
+  const activeHymn = useMemo(() => playlist.find(h => h.id === activeHymnId) ?? null, [playlist, activeHymnId]);
+  const hymnView = activeHymn ? buildHymnWithChorus(activeHymn.verses, activeHymn.chorus ?? []) : [];
+  const flatLines = useMemo(() => flattenHymnView(hymnView), [hymnView]);
 
-JSON.parse(raw);
-  
-    // 1) جرّب من hymns أولاً (إذا متوفر)
-    let full = hymns.find(x => x.id === id) ?? null;
-  
-    // 2) إذا ما لقاها، جيبها من السيرفر
-    if (!full) {
-      const res = await fetch(`/api/hymns/${id}`);
-      if (!res.ok) {
-        console.error("❌ Failed to fetch hymn by id", id);
-        return;
-      }
-      full = await res.json();
+  const selectedHymn = useMemo<Hymn | null>(
+    () => hymns.find((h) => h.id === selectedHymnId) ?? null,
+    [selectedHymnId, hymns]
+  );
+
+  // إعادة تعيين الفهرس عند تغيير الترنيمة
+  useEffect(() => { setCurrentLineIndex(-1); }, [activeHymnId]);
+
+  // استقبال تغيير الفهرس من الشاشة الثانية
+  useEffect(() => {
+    if (typeof window === "undefined" || !window.electronAPI) return;
+    window.electronAPI.onLineChanged?.((index: number) => setCurrentLineIndex(index));
+    return () => window.electronAPI?.removeAllListeners?.("lineChanged");
+  }, []);
+
+  // ✅ دالة العرض - ترسل النص + كل السطور + الفهرس
+  const openLyricsOverlay = useCallback(async (lineText: string, lineIndex: number) => {
+    setShowImageOverlay(false);
+    setShowLyricsOverlay(false);
+    setCurrentLineIndex(lineIndex);
+
+    if (typeof window !== "undefined" && window.electronAPI?.presentText) {
+      await window.electronAPI.presentText({
+        text: lineText,
+        lines: flatLines,  // ✅ كل السطور
+        index: lineIndex,  // ✅ الفهرس الحالي
+      });
+      return;
     }
-  
+    // Browser fallback
+    setPresentText(lineText);
+    setShowLyricsOverlay(true);
+    setTimeout(() => { lyricsOverlayRef.current?.requestFullscreen().catch(() => {}); }, 0);
+  }, [flatLines]);
+
+  // ✅ اختصارات لوحة المفاتيح - ترسل أوامر navigate للشاشة الثانية
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const tag = (e.target as HTMLElement)?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA") return;
+
+      if (e.key === "ArrowRight" || e.key === "ArrowDown") {
+        e.preventDefault();
+        if (typeof window !== "undefined" && window.electronAPI?.navigate) {
+          // إذا Electron: أرسل أمر navigate للشاشة الثانية
+          window.electronAPI.navigate("next");
+        } else {
+          // Browser fallback: تنقل محلي
+          setCurrentLineIndex(prev => {
+            const next = Math.min(flatLines.length - 1, prev + 1);
+            if (flatLines[next]) openLyricsOverlay(flatLines[next], next);
+            return next;
+          });
+        }
+      }
+
+      if (e.key === "ArrowLeft" || e.key === "ArrowUp") {
+        e.preventDefault();
+        if (typeof window !== "undefined" && window.electronAPI?.navigate) {
+          window.electronAPI.navigate("prev");
+        } else {
+          setCurrentLineIndex(prev => {
+            const next = Math.max(0, prev - 1);
+            if (flatLines[next]) openLyricsOverlay(flatLines[next], next);
+            return next;
+          });
+        }
+      }
+
+      if (e.key === "+" || e.key === "=") zoomIn();
+      if (e.key === "-" || e.key === "_") zoomOut();
+      if (e.key.toLowerCase() === "r") zoomReset();
+    };
+
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [flatLines, openLyricsOverlay]);
+
+  async function addToPlaylistById(id: number) {
+    const res = await fetch(`/api/hymns/${id}`);
+    const raw = await res.text();
+    if (!res.ok) return;
+    let full = hymns.find(x => x.id === id) ?? null;
+    if (!full) {
+      const res2 = await fetch(`/api/hymns/${id}`);
+      if (!res2.ok) return;
+      full = await res2.json();
+    }
     if (!full) return;
-  
-    setPlaylist(prev => {
-      if (prev.some(p => p.id === full!.id)) return prev;
-      return [...prev, full!];
-    });
-  
+    setPlaylist(prev => prev.some(p => p.id === full!.id) ? prev : [...prev, full!]);
     setActiveHymnId(full.id);
     setSelectedHymnId(full.id);
-  
-    console.log("✅ Added to playlist:", full.title);
   }
+
   async function loadMore() {
     const res = await fetch(`/api/hymns?q=${encodeURIComponent(q)}&limit=5&offset=${nextOffset}`);
     const data = await res.json();
-  
     setHymnResults(prev => [...prev, ...(data.items ?? [])]);
     setHasMore(Boolean(data.hasMore));
     setNextOffset(Number(data.nextOffset ?? nextOffset));
   }
+
   async function openBlackScreen() {
     setShowBlackOverlay(true);
-    setShowLyricsOverlay(false); // إذا تريد تطفي الكلمات
-    setShowImageOverlay(false);  // إذا تريد تطفي الخلفية
-  
-    // نخليه فول سكرين على نفس الديف (أفضل)
-    setTimeout(() => {
-      blackRef.current?.requestFullscreen().catch(() => {});
-    }, 0);
+    setShowLyricsOverlay(false);
+    setShowImageOverlay(false);
+    setTimeout(() => { blackRef.current?.requestFullscreen().catch(() => {}); }, 0);
   }
+
   function toggleSelect(id: number) {
-    setSelectedIds((prev) =>
-      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
-    );
+    setSelectedIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
   }
-  function selectAllPlaylist() {
-    setSelectedIds(playlist.map((h) => h.id));
-  }
- 
+
+  function selectAllPlaylist() { setSelectedIds(playlist.map(h => h.id)); }
+
   function deleteSelectedFromPlaylist() {
     if (selectedIds.length === 0) return;
-  
-    setPlaylist((prev) => prev.filter((h) => !selectedIds.includes(h.id)));
-  
-    // إذا الترنيمة الحالية انحذفت → اختار غيرها أو طفي العرض
+    setPlaylist(prev => prev.filter(h => !selectedIds.includes(h.id)));
     if (activeHymnId && selectedIds.includes(activeHymnId)) {
-      const remaining = playlist.filter((h) => !selectedIds.includes(h.id));
+      const remaining = playlist.filter(h => !selectedIds.includes(h.id));
       const next = remaining[0]?.id ?? null;
       setActiveHymnId(next);
-      // إذا ماكو بقى شي:
-      if (!next) {
-        setSelectedHymnId(null);
-        setPresentText(null);
-        setShowLyricsOverlay(false);
-      }
+      if (!next) { setSelectedHymnId(null); setPresentText(null); setShowLyricsOverlay(false); }
     }
-  
     setSelectedIds([]);
   }
-  function splitVersesAndChorus(
-    verses?: string[],
-    formatted?: boolean
-  ) {
-    if (!Array.isArray(verses)) {
-      return { verses: [], chorus: [] };
-    }
-  
-    if (!formatted) {
-      // 🔴 الترنيمة مو مفورمَتة = ماكو قرار
-      return {
-        verses,
-        chorus: [],
-      };
-    }
-  
-    // هنا فقط نحاول نطلع القرار
-    const chorusIndex = verses.findIndex(v =>
-      typeof v === "string" &&
-      (
-        v.includes("القرار") ||
-        v.includes("لازمة") ||
-        v.includes("Refrain")
-      )
-    );
-  
-    if (chorusIndex === -1) {
-      return { verses, chorus: [] };
-    }
-  
-    return {
-      verses: verses.slice(0, chorusIndex),
-      chorus: verses.slice(chorusIndex + 1),
-    };
-  }
-useEffect(() => {
-  const handleKey = (e: KeyboardEvent) => {
-    if (e.key === "Escape") {
-      setShowBlackOverlay(false);
 
-      if (document.fullscreenElement) {
-        document.exitFullscreen().catch(() => {});
+  useEffect(() => {
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setShowBlackOverlay(false);
+        if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
       }
-    }
-  };
+    };
+    window.addEventListener("keydown", handleKey);
+    return () => window.removeEventListener("keydown", handleKey);
+  }, []);
 
-  window.addEventListener("keydown", handleKey);
-  return () => window.removeEventListener("keydown", handleKey);
-}, []);
-useEffect(() => {
-  async function fetchHymns() {
+  useEffect(() => {
+    async function fetchHymns() {
+      try {
+        const res = await fetch("/api/hymns?limit=5&offset=0");
+        const data: { items: Hymn[] } = await res.json();
+        setHymns(Array.isArray(data.items) ? data.items : []);
+      } catch { setHymns([]); }
+    }
+    fetchHymns();
+  }, []);
+
+  async function handleSearch(e: React.ChangeEvent<HTMLInputElement>) {
+    const v = e.target.value;
+    setQ(v);
+    if (!v.trim()) { setHymnResults([]); setHasMore(false); setNextOffset(0); return; }
     try {
-      const res = await fetch("/api/hymns?limit=5&offset=0");
-      const data: { items: Hymn[] } = await res.json();
-
-      setHymns(Array.isArray(data.items) ? data.items : []);
-    } catch (err) {
-      console.error("Fetch hymns failed", err);
-      setHymns([]);
-
-    }
+      const res = await fetch(`/api/hymns?q=${encodeURIComponent(v)}&limit=5&offset=0`);
+      const data = await res.json();
+      setHymnResults(data.items ?? []);
+      setHasMore(Boolean(data.hasMore));
+      setNextOffset(Number(data.nextOffset ?? 0));
+    } catch { setHymnResults([]); }
   }
 
-  fetchHymns();
-}, []);
-async function handleSearch(e: React.ChangeEvent<HTMLInputElement>) {
-  const v = e.target.value;
-  setQ(v);
-
-  if (!v.trim()) {
-    setHymnResults([]);
-    setHasMore(false);
-    setNextOffset(0);
-    return;
+  function closeAllOverlays() {
+    setShowImageOverlay(false);
+    setShowLyricsOverlay(false);
+    setPresentText(null);
+    if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
   }
 
-  try {
-    const res = await fetch(`/api/hymns?q=${encodeURIComponent(v)}&limit=5&offset=0`);
-    const data = await res.json();
-
-    setHymnResults(data.items ?? []);
-    setHasMore(Boolean(data.hasMore));
-    setNextOffset(Number(data.nextOffset ?? 0));
-  } catch (err) {
-    console.error("handleSearch error:", err);
-    setHymnResults([]);
+  async function openImageOverlay() {
+    setShowLyricsOverlay(false);
+    setShowImageOverlay(true);
+    setTimeout(() => { imageOverlayRef.current?.requestFullscreen().catch(() => {}); }, 0);
   }
-}
-function exitPresentations() {
-  setPresentTexts(null);
-  if (document.fullscreenElement) {
-    document.exitFullscreen().catch(() => {});
+
+  async function connectToScreen() {
+    if (window.electronAPI?.sendToScreen) { window.electronAPI.sendToScreen(text); return; }
+    alert("هذي الميزة تشتغل بتطبيق Electron مو بالمتصفح");
   }
-}
-useEffect(() => {
-  const onKeyDown = (e: KeyboardEvent) => {
-    if (e.key === "Escape") {
-      exitPresentations();
-    }
-  };
 
-  window.addEventListener("keydown", onKeyDown);
-  return () => window.removeEventListener("keydown", onKeyDown);
-}, []);
-const activeHymn = useMemo(() => {
-  return playlist.find(h => h.id === activeHymnId) ?? null;
-}, [playlist, activeHymnId]);
-  
-const [showLyricsOverlay, setShowLyricsOverlay] = useState(false);
-const lyricsOverlayRef = useRef<HTMLDivElement | null>(null);
-const imageOverlayRef = useRef<HTMLDivElement | null>(null);
-async function openImageOverlay() {
-  setShowLyricsOverlay(false); // طفي الكلمات
-  setShowImageOverlay(true);
+  useEffect(() => {
+    const onFsChange = () => {
+      if (!document.fullscreenElement && presentText) setPresentText(null);
+    };
+    document.addEventListener("fullscreenchange", onFsChange);
+    return () => document.removeEventListener("fullscreenchange", onFsChange);
+  }, [presentText]);
 
-  setTimeout(() => {
-    imageOverlayRef.current?.requestFullscreen().catch(() => {});
-  }, 0);
-}
-
-async function openLyricsOverlay(text: string) {
-  // إذا Electron موجود
-  if (typeof window !== "undefined" && window.electronAPI?.presentText) {
-    await window.electronAPI.presentText({ text });
-    return;
-  }
-  window.electronAPI?.presentText?.({ text });
-  // Browser fallback
-  setShowImageOverlay(false);
-  setShowLyricsOverlay(true);
-  setPresentText(text);
-
-  setTimeout(() => {
-    lyricsOverlayRef.current?.requestFullscreen().catch(() => {});
-  }, 0);
-}
-function closeAllOverlays() {
-  setShowImageOverlay(false);
-  setShowLyricsOverlay(false);
-  setPresentText(null);
-
-  if (document.fullscreenElement) {
-    document.exitFullscreen().catch(() => {});
-  }
-}
-async function connectToScreen() {
-  // داخل Electron فقط
-  
-  if (window.electronAPI?.sendToScreen) {
-    window.electronAPI.sendToScreen(text);
-    return;
-  }
-  // أو إذا عندك presentText:
-  window.electronAPI?.presentText?.({ text: "" });
-  alert("هذي الميزة تشتغل بتطبيق Electron مو بالمتصفح");
-}
-  const [q, setQ] = useState("");
-  const [selectedHymnId, setSelectedHymnId] = useState<number | null>(null);
-  // النص اللي راح ينعرض فول سكرين
-  const [presentText, setPresentText] = useState<string | null>(null);
-  const overlayRef = useRef<HTMLDivElement | null>(null);
-  const selectedHymn = useMemo<Hymn | null>(() => {
-    return hymns.find((h) => h.id === selectedHymnId) ?? null;
-  }, [selectedHymnId, hymns]); 
-  console.log("ACTIVE:", activeHymn?.id, "verses?", Array.isArray(activeHymn?.verses));
-console.log("PLAYLIST[0]:", playlist[0]); 
-  const hymnView = activeHymn
-  ? buildHymnWithChorus(
-      activeHymn.verses,
-      activeHymn.chorus ?? []
-    )
-  : [];
-useEffect(() => {
-  const onKeyDown = (e: KeyboardEvent) => {
-    if (e.key === "Escape") {
-      closeAllOverlays();
-    }
-  };
-  window.addEventListener("keydown", onKeyDown);
-  return () => window.removeEventListener("keydown", onKeyDown);
-}, []);
- // إذا المستخدم ضغط ESC وطلع من fullscreen من المتصفح نفسه
- useEffect(() => {
-  const onFsChange = () => {
-    // إذا طلع من fullscreen وهو بوضع العرض، نخلي الوضع ينسد
-    if (!document.fullscreenElement && presentText) {
-      setPresentText(null);
-    }
-  };
-  document.addEventListener("fullscreenchange", onFsChange);
-  return () => document.removeEventListener("fullscreenchange", onFsChange);
-}, [presentText]);
-const hymnLines: string[] = [];
-
-if (selectedHymn?.chorus?.length) {
-  hymnLines.push("— القرار —");
-  hymnLines.push(...selectedHymn.chorus);
-}
-console.log("CHORUS:", selectedHymn?.chorus);
-console.log(selectedHymn);
-console.log(
-  selectedHymn?.title,
-  selectedHymn?.chorus
-);  
   return (
     <div>
-    <div className="flex justify-center items-center " >
-      <Image src="/logo_transparent.png" alt="aliance church " width={100} height={100} />
-      
-    </div>
-    <div className="flex justify-center items-center " >
-      <h1>كنيسة الاتحاد المسيحي - بغداد </h1>
-        
-    </div>
-    
-    <Stack    spacing={2} direction="row" sx={{display:"flex" , justifyContent:"center", margin:"20px" ,  }}>
-    <Button
-  onClick={openBlackScreen}
-  color="error"
-  size="large"
-  variant="contained"
->
-  شاشة سوداء
-</Button>
-      <Button onClick={connectToScreen}   color="error" size="large" variant="contained">ربط الشاشة </Button>
-      <Button onClick={openImageOverlay} color="error" size="large"  variant="outlined">شاشة خلفية </Button>
-    </Stack>
-    <Box
-      component="form"
-      sx={{ '& > :not(style)': { m: 1, maxWidth:400, mt:3 ,  height:"auto" } , display:"flex" , justifyContent:"center" , alignSelf:"flex-start" }}
-      noValidate
-      autoComplete="off"
-    >
-    <TextField
-    fullWidth
-  value={q}
-  onChange={handleSearch}
-  label="ابحث هنا"
-  variant="standard"/>
+      <div className="flex justify-center items-center">
+        <Image src="/logo_transparent.png" alt="aliance church" width={100} height={100} />
+      </div>
+      <div className="flex justify-center items-center">
+        <h1>كنيسة الاتحاد المسيحي - بغداد</h1>
+      </div>
 
-{q.trim() &&  (
-  <Typography sx={{ mt: 2, opacity: 0.7 }}>
-    ماكو نتائج… جرّب كلمة ثانية
-  </Typography>
-)}
+      <Stack spacing={2} direction="row" sx={{ display: "flex", justifyContent: "center", margin: "20px" }}>
+        <Button onClick={openBlackScreen} color="error" size="large" variant="contained">شاشة سوداء</Button>
+        <Button onClick={connectToScreen} color="error" size="large" variant="contained">ربط الشاشة</Button>
+        <Button onClick={openImageOverlay} color="error" size="large" variant="outlined">شاشة خلفية</Button>
+      </Stack>
 
-{(hymnResults?.length ?? 0) > 0 && (
-  <Box sx={{ mt: 2 }}>
-    <Typography fontWeight={700}>الترانيم:</Typography>
-  </Box>
-)}
+      {/* ✅ شرح الاختصارات + عداد السطر */}
+      <Box sx={{ display: "flex", justifyContent: "center", alignItems: "center", mb: 1, gap: 3 }}>
+        <Typography variant="caption" sx={{ opacity: 0.55 }}>
+          ← → للتنقل بين السطور على شاشة العرض
+        </Typography>
+        {currentLineIndex >= 0 && flatLines.length > 0 && (
+          <Typography variant="caption" sx={{ fontWeight: 700, color: "primary.main" }}>
+            {currentLineIndex + 1} / {flatLines.length}
+          </Typography>
+        )}
+      </Box>
 
-<Box
-  sx={{
-    display: "flex",
-    gap: 2,
-    mt: 3,
-    height: "70vh",
-  }}
->
+      <Box component="form"
+        sx={{ '& > :not(style)': { m: 1, maxWidth: 400, mt: 3, height: "auto" }, display: "flex", justifyContent: "center", alignSelf: "flex-start" }}
+        noValidate autoComplete="off"
+      >
+        <TextField fullWidth value={q} onChange={handleSearch} label="ابحث هنا" variant="standard" />
+        {q.trim() && <Typography sx={{ mt: 2, opacity: 0.7 }}>ماكو نتائج… جرّب كلمة ثانية</Typography>}
+        {(hymnResults?.length ?? 0) > 0 && <Box sx={{ mt: 2 }}><Typography fontWeight={700}>الترانيم:</Typography></Box>}
+        <Box sx={{ display: "flex", gap: 2, mt: 3, height: "70vh" }}>
+          <List>
+            {hymnResults.map(h => (
+              <ListItemButton key={h.id} onClick={() => { setHymnResults([]); setQ(""); addToPlaylistById(h.id); }}>
+                <Typography>{h.title}</Typography>
+              </ListItemButton>
+            ))}
+          </List>
+        </Box>
+      </Box>
 
-<List>
-      {hymnResults.map(h => (
-        <ListItemButton
-          key={h.id}
-          onClick={() => {
-            setHymnResults([]);
-            setQ("");
-            addToPlaylistById(h.id);
+      {hasMore && (
+        <Box sx={{ display: "flex", justifyContent: "center", mt: 1, marginLeft: "750px" }}>
+          <Button variant="text" size="medium" color="error" onClick={loadMore} sx={{ textTransform: "none" }}>
+            إظهار المزيد من النتائج
+          </Button>
+        </Box>
+      )}
+
+      <Box sx={{ display: "flex", gap: 3, mt: 3, alignItems: "flex-start" }}>
+        {/* كلمات الترنيمة */}
+        <Box sx={{ flex: 3, border: "1px solid rgba(0,0,0,0.1)", borderRadius: 2, p: 2, minHeight: 200 }}>
+          {hymnView.map((block, i) => (
+            <Box key={i} sx={{ mb: 2 }}>
+              {block.lines.map((line, j) => {
+                const globalIndex = hymnView.slice(0, i).reduce((acc, b) => acc + b.lines.length, 0) + j;
+                const isActive = globalIndex === currentLineIndex;
+                return (
+                  <ListItemButton
+                    key={j}
+                    onClick={() => openLyricsOverlay(Array.isArray(line) ? line.join("\n") : line, globalIndex)}
+                    sx={{
+                      backgroundColor: isActive ? "rgba(25, 118, 210, 0.15)" : "transparent",
+                      borderRadius: 1,
+                      border: isActive ? "1px solid rgba(25, 118, 210, 0.4)" : "1px solid transparent",
                     }}
-        >
-          <Typography>{h.title}</Typography>
-        </ListItemButton>
-      ))}
-    </List>
-    
+                  >
+                    <Typography sx={{
+                      fontSize: { xs: `${28 * fontScale}px`, md: `${28 * fontScale}px` },
+                      fontWeight: block.type === "chorus" ? "bold" : "normal",
+                      color: block.type === "chorus" ? "primary.main" : "text.primary",
+                      textAlign: "right", width: "100%",
+                    }}>
+                      {line}
+                    </Typography>
+                  </ListItemButton>
+                );
+              })}
+            </Box>
+          ))}
+        </Box>
 
-</Box>
+        {/* قائمة الترانيم */}
+        <Box sx={{ flex: 1, border: "1px solid rgba(0,0,0,0.1)", borderRadius: 2, p: 2, minHeight: 200 }}>
+          <Typography fontWeight={700} mb={1}>اختر ترنيمة</Typography>
+          <Box sx={{ display: "flex", gap: 1, mb: 1 }}>
+            <Checkbox onClick={selectAllPlaylist} />
+            <DeleteIcon color="error" sx={{ cursor: "pointer" }} onClick={deleteSelectedFromPlaylist} />
+          </Box>
+          <List dense>
+            {playlist.map((h, index) => {
+              const checked = selectedIds.includes(h.id);
+              return (
+                <ListItemButton key={h.id} selected={h.id === activeHymnId}
+                  onClick={() => { setActiveHymnId(h.id); setSelectedHymnId(h.id); }}
+                  sx={{ display: "flex", gap: 1 }}
+                >
+                  <Checkbox checked={checked} onClick={e => { e.stopPropagation(); toggleSelect(h.id); }} />
+                  <Typography sx={{ fontSize: 14 }}>{index + 1}. {h.title}</Typography>
+                </ListItemButton>
+              );
+            })}
+          </List>
+        </Box>
+      </Box>
 
-    </Box>
-    {hasMore && (
-  <Box sx={{ display: "flex", justifyContent: "center", mt: 1 , marginLeft:"750px" }}>
-    <Button
-      variant="text"
-      size="medium"
-      color="error"
-      onClick={loadMore}
-      sx={{
-        textTransform: "none",
-       
-      }}
-    >
-      إظهار المزيد من النتائج
-    </Button>
-  </Box>
-)}
-    <Box
-  sx={{
-    display: "flex",
-    gap: 3,
-    mt: 3,
-    alignItems: "flex-start",
-  }}
->
-  {/* اليسار: كلمات الترنيمة */}
-  <Box
-    sx={{
-      flex: 3,
-      border: "1px solid rgba(0,0,0,0.1)",
-      borderRadius: 2,
-      p: 2,
-      minHeight: 200,
-    }}
-  >  
-{hymnView.map((block, i) => (
-  <Box key={i} sx={{ mb: 2 }}>
-    {block.lines.map((line, j) => (
-      <ListItemButton
-        key={j}
-        onClick={() =>  openLyricsOverlay(Array.isArray(line) ? line.join("\n") : line)}
-      >
-        <Typography
-          sx={{
-            fontSize: 18,
-            fontWeight: block.type === "chorus" ? "bold" : "normal",
-            color: block.type === "chorus" ? "primary.main" : "text.primary",
-            textAlign: "center",
-          }}
-        >
-          {line}
-        </Typography>
-      </ListItemButton>
-    ))}
-  </Box>
-))}
-  </Box>
-  {/* اليمين: اختر ترنيمة */}
-  <Box
-    sx={{
-      flex: 1,
-      border: "1px solid rgba(0,0,0,0.1)",
-      borderRadius: 2,
-      p: 2,
-      minHeight: 200,
-    }}
-  >
-    <Typography fontWeight={700} mb={1}>
-      اختر ترنيمة
-    </Typography>
-    <Box sx={{ display: "flex", gap: 1, mb: 1 }}>
-  <Checkbox  onClick={selectAllPlaylist} />
-   <DeleteIcon color="error" sx={{cursor:"pointer"}} onClick={deleteSelectedFromPlaylist} />
+      {/* شاشة خلفية */}
+      {showImageOverlay && !showLyricsOverlay && (
+        <Box ref={imageOverlayRef} sx={{ position: "fixed", inset: 0, zIndex: 9999 }} onDoubleClick={closeAllOverlays}>
+          <Box sx={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.5)" }} />
+          <Box sx={{ position: "relative", height: "100%", display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <Box sx={{ position: "relative", zIndex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 0.5 }}>
+              <Box component="img" src="/aliance.png" sx={{ width: 500, opacity: 0.9 }} />
+              <Typography sx={{ color: "white", fontSize: { xs: 18, md: 100 }, fontWeight: 600, textAlign: "center", textShadow: "0 2px 10px rgba(0,0,0,0.7)" }}>
+                كنيسة الاتحاد المسيحي – بغداد
+              </Typography>
+            </Box>
+          </Box>
+        </Box>
+      )}
 
-</Box>
-<List dense>
-  {playlist.map((h, index) => {
-    const checked = selectedIds.includes(h.id);
+      {/* Browser fallback كلمات */}
+      {showLyricsOverlay && presentText && (
+        <Box ref={lyricsOverlayRef} onDoubleClick={closeAllOverlays} sx={{ position: "fixed", inset: 0, zIndex: 10000, overflow: "hidden" }}>
+          <Box sx={{ position: "absolute", inset: 0, backgroundImage: "url('/church1.jpeg')", backgroundSize: "cover", backgroundPosition: "center", zIndex: 0 }} />
+          <Box sx={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.55)", backdropFilter: "blur(2px)", zIndex: 1 }} />
+          <Box sx={{ position: "relative", zIndex: 2, height: "100%", display: "flex", alignItems: "center", justifyContent: "center", textAlign: "center", p: 6, color: "white" }}>
+            <Box sx={{ maxWidth: "90%" }}>
+              <Typography dir="rtl" sx={{ fontSize: { xs: 28, md: 150 }, fontWeight: 900, lineHeight: 1.5, textAlign: "center", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+                {presentText}
+              </Typography>
+            </Box>
+          </Box>
+        </Box>
+      )}
 
-    return (
-      <ListItemButton
-        key={h.id}
-        selected={h.id === activeHymnId}
-        onClick={() => {
-          setActiveHymnId(h.id);
-          setSelectedHymnId(h.id); // حتى كلماتها تتحدث
-        }}
-        sx={{ display: "flex", gap: 1 }}
-      >
-        <Checkbox
-          checked={checked}
-          onClick={(e) => {
-            e.stopPropagation(); // مهم حتى لا يعتبره click على الترنيمة
-            toggleSelect(h.id);
-          }}
-    
+      {/* أزرار الخط */}
+      <Box sx={{ position: "absolute", top: 20, right: 20, zIndex: 5, display: "flex", gap: 1, background: "rgba(0,0,0,0.35)", borderRadius: 2, p: 1, backdropFilter: "blur(4px)" }}>
+        <button onClick={() => window.electronAPI?.changeFont?.(+8)} style={btnStyle}>−</button>
+        <button onClick={() => window.electronAPI?.changeFont?.(-8)} style={btnStyle}>⟲</button>
+        <button onClick={() => window.electronAPI?.resetFont?.()} style={btnStyle}>+</button>
+      </Box>
+
+      {/* شاشة سوداء */}
+      {showBlackOverlay && (
+        <Box ref={blackRef}
+          onDoubleClick={() => { setShowBlackOverlay(false); if (document.fullscreenElement) document.exitFullscreen().catch(() => {}); }}
+          sx={{ position: "fixed", inset: 0, zIndex: 10000, backgroundColor: "black", cursor: "default" }}
         />
-        <Typography sx={{ fontSize: 14 }}>
-          {index + 1}. {h.title}
-        </Typography>
-      </ListItemButton>
-    );
-  })}
-</List>
-
-    <List dense>
-      {hymnResults.map((h) => (
-        <ListItemButton
-          key={h.id}
-          onClick={() => setSelectedHymnId(h.id)}
-        >
-          <Typography>{h.title}</Typography>
-        </ListItemButton>
-      ))}
-    </List>
-  </Box>
-</Box>
-    <List sx={{ border: "1px solid #ddd", borderRadius: 2 }}>
-
-</List>
-
-    {showImageOverlay && (
-  <Box
-    ref={imageOverlayRef}
-    sx={{
-      position: "fixed",
-      inset: 0,
-      zIndex: 9999,
-     
-    }}
-    onDoubleClick={closeAllOverlays}
-  >
-    <Box sx={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.5)" }} />
-
-    <Box
-      sx={{
-        position: "relative",
-        height: "100%",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-      }}
-    >
-      <Box  sx={{
-    position: "relative",
-    zIndex: 1,
-    display: "flex",
-    flexDirection: "column", // 👈 يخليهم تحت بعض
-    alignItems: "center",    // 👈 بالنص أفقيًا
-    gap: 0.5,                  // مسافة بين اللوجو والكتابة
-    
-  }}
->
-      <Box
-        component="img"
-        src="/aliance.png"
-        sx={{ width: 500, opacity: 0.9 }}
-      />
-      <Typography
-    sx={{
-      color: "white",
-      fontSize: { xs: 18, md: 100 },
-      fontWeight: 600,
-      letterSpacing: 1,
-      opacity: 0.9,
-      textAlign: "center",
-      textShadow: "0 2px 10px rgba(0,0,0,0.7)", // وضوح أكثر
-
-    }}
-  >
-    كنيسة الاتحاد المسيحي – بغداد
-  </Typography>
-  </Box>
-    </Box>
-    
-  </Box>
-)}
-
-
-{showLyricsOverlay && presentText && (
-  <Box
-    ref={lyricsOverlayRef}
-    onDoubleClick={closeAllOverlays}
-    sx={{
-      position: "fixed",
-      inset: 0,
-      zIndex: 10000,
-      overflow: "hidden",
-    }}
-  >
-    {/* 1️⃣ الخلفية */}
-    <Box
-      sx={{
-        position: "absolute",
-        inset: 0,
-        backgroundImage: "url('/church1.jpeg')", // GIF / صورة / فيديو
-        backgroundSize: "cover",
-        backgroundPosition: "center",
-        backgroundRepeat: "no-repeat",
-        zIndex: 0,
-      }}
-    />
-
-    {/* 2️⃣ الطبقة الشفافة */}
-    <Box
-      sx={{
-        position: "absolute",
-        inset: 0,
-        background: "rgba(0,0,0,0.55)", // 👈 نسبة الشفافية
-       backdropFilter: "blur(2px)",    // 👈 اختياري (حلو)
-        zIndex: 1,
-      }}
-    />
-
-    {/* 3️⃣ المحتوى */}
-    <Box
-      sx={{
-        position: "relative",
-        zIndex: 2,height: "100%",
-        display: "flex",alignItems: "center",
-        justifyContent: "center",textAlign: "center",
-        p: 6,color: "white",
-      }}
-    >
-      {/* اللوجو */}
-      <Box
-        component="img"
-        src="/aliance.png"
-        alt="Church Logo"
-        sx={{
-          width: { xs: 80, md: 140 },
-          opacity: 0.9,
-          position: "absolute",
-          bottom: 40,
-          left: 24,
-        }}
-      />
-
-   {/* صندوق النص */}
-<Box
-  sx={{
-    maxWidth: "90%", }}>
-  <Typography
-    dir="rtl"
-    sx={{
-      fontSize: { xs: 28, md: 150 },
-      fontWeight: 900,
-      lineHeight: 1.5,
-      textAlign: "center",
-      whiteSpace: "pre-wrap",  // 👈 يكسر السطور
-      wordBreak: "break-word",
-    }}
-  >
-    {presentText}
-  </Typography>
-</Box>
-    </Box>
-    
-  </Box>
-  
-)}
-{showBlackOverlay && (
-  <Box
-    ref={blackRef}
-    onDoubleClick={() => {
-      setShowBlackOverlay(false);
-      if (document.fullscreenElement) {
-        document.exitFullscreen().catch(() => {});
-      }
-    }}
-    sx={{
-      position: "fixed",
-      inset: 0,
-      zIndex: 10000,
-      backgroundColor: "black",
-      cursor: "default",
-    }}
-  />
-)}
-{/* <p>عدد الترانيم: {hymns.length}</p> */}
-    </div>);
+      )}
+    </div>
+  );
 }
